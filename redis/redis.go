@@ -134,14 +134,14 @@ func (s *RedisStore) Claim(ctx context.Context, timeout time.Duration) (*job.Job
 		return nil, fmt.Errorf("failed to set claimed_at: %w", err)
 	}
 
-	return nil, nil
+	return j, nil
 }
 
 // Ack removes a successfully processed job from the processing list.
 // Research: How to safely remove a specific job from a list + delete its metadata.
 func (s *RedisStore) Ack(ctx context.Context, jobID string) error {
 	const processingKey = "queue:processing"
-	metakey := fmt.Sprintf("jobid:", jobID)
+	metakey := fmt.Sprintf("job:", jobID)
 	//    LREM key count value  → count=1 means remove one occurrence
 	removed, err := s.client.LRem(ctx, processingKey, 1, jobID).Result()
 	if err != nil {
@@ -213,7 +213,7 @@ func (s *RedisStore) ReclaimExpired(ctx context.Context, visibilityTimeout time.
 		pipe.HSet(ctx, metaKey, "claimed_at", "")
 
 		// Optionally increment attempts here if you want
-		pipe.HIncrBy(ctx, metaKey, "attempts", 1)
+		// pipe.HIncrBy(ctx, metaKey, "attempts", 1)
 
 		_, err = pipe.Exec(ctx)
 		if err != nil {
