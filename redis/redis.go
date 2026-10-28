@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,6 +34,126 @@ func NewRedisStore(addr string) *RedisStore {
 	return &RedisStore{
 		client: rdc,
 	}
+
+}
+
+// Fail is called when process() returns an error.
+// Steps:
+// 1. Remove job from queue:processing
+// 2. Load metadata, increment attempts
+// 3. If attempts < max_attempts → add to queue:delayed with score = now + delay
+// 4. If attempts >= max_attempts → push to queue:dlq
+// Research:
+//   - How to calculate delay (fixed 10s or simple exponential)
+//   - ZADD for sorted set
+//   - What to store as the member (just job ID is enough)
+func (s *RedisStore) Fail(ctx context.Context, jobID string) error {
+	// TODO: Implement
+
+	const (
+		processingKey = "queue:processing"
+		delayedKey    = "queue:delayed"
+		dlqKey        = "queue:dlq"
+	)
+
+	err := s.client.LRem(ctx, processingKey, 1, jobID).Err()
+
+	if err != nil {
+		return fmt.Errorf("Failed to remove job from processing queue : %s", jobID)
+	}
+
+	metaKey := fmt.Sprintf("job:%s", jobID)
+	attempts, err := s.client.HIncrBy(ctx, metaKey, "attempts", 1).Result()
+	if err != nil {
+		return fmt.Errorf("failed to increment attempts: %w", err)
+	}
+	maxAttemptsStr, err := s.client.HGet(ctx, metaKey, "max_attempts").Result()
+	if err != nil {
+		return fmt.Errorf("failed to get max_attempts: %w", err)
+	}
+	var maxAttempts int64
+	fmt.Sscanf(maxAttemptsStr, "%d", &maxAttempts)
+
+	// 4. Decide: retry or DLQ
+	if attempts < maxAttempts {
+		// Calculate delay (simple exponential in seconds)
+		// 1st retry: 5s, 2nd: 10s, 3rd: 20s ...
+		delaySeconds := (1 << (attempts - 1)) * 5
+		jitter := rand.Intn(25) // 25% jitter
+		delaySeconds += jitter
+		if delaySeconds > 80 {
+			delaySeconds = 80 // cap at 1.2 minute
+		}
+
+		readyAt := time.Now().UTC().Add(time.Duration(delaySeconds) * time.Second).Unix()
+
+		// Add to delayed sorted set (score = when it should become ready)
+		err = s.client.ZAdd(ctx, delayedKey, rds.Z{
+			Score:  float64(readyAt),
+			Member: jobID,
+		}).Err()
+		if err != nil {
+			return fmt.Errorf("failed to add job to delayed queue: %w", err)
+		}
+
+		// Clear claimed_at
+		_ = s.client.HSet(ctx, metaKey, "claimed_at", "").Err()
+
+		log.Printf("job %s scheduled for retry in %ds (attempt %d/%d)", jobID, delaySeconds, attempts, maxAttempts)
+	} else {
+		// Move to DLQ
+		err = s.client.LPush(ctx, dlqKey, jobID).Err()
+		if err != nil {
+			return fmt.Errorf("failed to move job to DLQ: %w", err)
+		}
+
+		log.Printf("job %s moved to DLQ after %d attempts", jobID, attempts)
+	}
+
+	return nil
+}
+
+func (s *RedisStore) PromoteDelayed(ctx context.Context) (int, error) {
+	// TODO:
+	// 1. Get current unix timestamp
+	// 2. ZRANGEBYSCORE queue:delayed -inf <now>
+	// 3. For each job ID:
+	//      - ZREM from delayed
+	//      - LPUSH into queue:ready
+	// 4. Return how many jobs were promoted
+	const (
+		delayedKey = "queue:delayed"
+		readyKey   = "queue:ready"
+	)
+
+	now := time.Now().UTC().Unix()
+	jobIDs, err := s.client.ZRangeArgs(ctx, rds.ZRangeArgs{
+		Key:     delayedKey,
+		Start:   "-inf",
+		Stop:    now,
+		ByScore: true,
+	}).Result()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get jobs from delayed queue: %w", err)
+	}
+
+	if len(jobIDs) == 0 {
+		return 0, nil
+	}
+
+	pipe := s.client.Pipeline()
+
+	for _, jobID := range jobIDs {
+		pipe.ZRem(ctx, delayedKey, jobID) // remove from delayed
+		pipe.LPush(ctx, readyKey, jobID)  // push to ready
+	}
+
+	_, err = pipe.Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to promote delayed jobs: %w", err)
+	}
+
+	return len(jobIDs), nil
 
 }
 

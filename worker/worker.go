@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -45,13 +46,20 @@ func (w *Worker) Start(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				n, err := w.store.ReclaimExpired(ctx, w.visibilityTimeout)
+				n1, err := w.store.ReclaimExpired(ctx, w.visibilityTimeout)
 				if err != nil {
 					log.Printf("failed to reclaim expired jobs: %v", err)
 					continue
 				}
-				if n > 0 {
-					log.Printf("reclaimed %d expired jobs", n)
+				if n1 > 0 {
+					log.Printf("reclaimed %d expired jobs", n1)
+				}
+				n2, err := w.store.PromoteDelayed(ctx)
+				if err != nil {
+					log.Printf("promote delayed error: %v", err)
+				}
+				if n2 > 0 {
+					log.Printf("promoted %d delayed jobs to ready", n2)
 				}
 			}
 		}
@@ -80,6 +88,9 @@ func (w *Worker) Start(ctx context.Context) error {
 			if err != nil {
 				log.Printf("failed to process job %s: %v", j.ID, err)
 				// Later we will add retry / DLQ logic here.
+				if failerr := w.store.Fail(ctx, j.ID); failerr != nil {
+					log.Printf("failed to mark job as failed %s: %v", j.ID, failerr)
+				}
 				continue
 			}
 
@@ -102,5 +113,6 @@ func (w *Worker) process(j *job.Job) error {
 
 	// For now always succeed.
 	// Later you can add real business logic or random failures for testing.
+
 	return nil
 }
