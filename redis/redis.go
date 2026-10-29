@@ -262,7 +262,7 @@ func (s *RedisStore) Claim(ctx context.Context, timeout time.Duration) (*job.Job
 // Research: How to safely remove a specific job from a list + delete its metadata.
 func (s *RedisStore) Ack(ctx context.Context, jobID string) error {
 	const processingKey = "queue:processing"
-	metakey := fmt.Sprintf("job:", jobID)
+	metakey := "job:" + jobID
 	//    LREM key count value  → count=1 means remove one occurrence
 	removed, err := s.client.LRem(ctx, processingKey, 1, jobID).Result()
 	if err != nil {
