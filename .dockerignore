@@ -1,0 +1,27 @@
+# Git
+.git
+.gitignore
+
+# Binaries / build output
+bin/
+tmp/
+*.exe
+*.test
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Docs / local files (optional)
+*.md
+!README.md
+
+# Env / secrets
+.env
+.env.*
+
+# Docker itself (optional)
+Dockerfile
+docker-compose.yml
