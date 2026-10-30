@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -104,14 +105,20 @@ func (w *Worker) Start(ctx context.Context) error {
 }
 
 func (w *Worker) process(j *job.Job) error {
-	// Simple simulation of work
-	log.Printf("processing job %s | payload: %s", j.ID, string(j.PayLoad))
 
 	// Simulate some work (remove this sleep later)
 	time.Sleep(2 * time.Second)
 
 	// For now always succeed.
-	// Later you can add real business logic or random failures for testing.
+	switch j.Type {
+	case "echo":
+		// Simple simulation of work
+		log.Printf("processing job %s | payload: %s", j.ID, string(j.PayLoad))
+	case "fail":
+		return fmt.Errorf("failed to process job %s", j.ID)
+	default:
+		return fmt.Errorf("unknown job type %s", j.Type)
+	}
 
 	return nil
 }

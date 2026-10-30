@@ -180,6 +180,7 @@ func (s *RedisStore) Enqueue(ctx context.Context, j *job.Job) error {
 
 	err := s.client.HSet(ctx, metaKey, map[string]interface{}{
 		"id":           j.ID,
+		"type":         j.Type,
 		"payload":      string(j.PayLoad),
 		"attempts":     j.Attempts,
 		"max_attempts": j.Maxattempts,
@@ -233,6 +234,9 @@ func (s *RedisStore) Claim(ctx context.Context, timeout time.Duration) (*job.Job
 	}
 	j := &job.Job{
 		ID: jobId,
+	}
+	if typ, ok := data["type"]; ok {
+		j.Type = typ
 	}
 	if payload, ok := data["payload"]; ok {
 		j.PayLoad = []byte(payload)
