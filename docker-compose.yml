@@ -1,0 +1,26 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker-runtime
+    environment:
+      - REDIS_ADDR=redis:6379
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Producer is optional in compose.
+  # Because it exits after enqueueing, it's often easier to run it from the host:
+  #   go run ./cmd/producer
+  # Or keep it and use `docker compose run producer`
+
+volumes:
+  redis_data:
